@@ -5,16 +5,24 @@
 #    distribution, for details about the copyright.
 #
 
-## This module contains helpers that deal with numbers in different
-## byte orders. Compiler intrinsics are used when available and the functions
-## will result in simple assignments if no conversion is necessary (the
-## compiler should be able to optimize these away).
+## This module contains helpers to deal with numbers in different byte orders.
+##
+## By default, the module use compiler intrinsics where possible to improve
+## performance on supported compilers: ``GCC``, ``LLVM_GCC``, ``CLANG``,
+## ``VCC`` and ``ICC``.
+##
+## It will fallback to pure nim procs in case the backend is not supported.
+## You can also use the flag `noIntrinsicsEndians` to disable compiler
+## intrinsics.
+##
+## Most of the API can be used at compile time too (procs that take `pointer`
+## arguments are the exceptions).
 ##
 
 include "system/inclrtl"
 
 # TODO This is needed so the tests can be compiled before the 1.1.0 release.
-# It should be removed once 1.2.0 is out (just remove this block and replace
+# It should be removed once 1.1.0 is out (just remove this block and replace
 # all occurrences of 'mySince' with 'since').
 when defined(testing):
   template mySince(version, body: untyped) =
@@ -25,7 +33,10 @@ else:
 
 # Use compiler intrinsics when available
 
-when defined(gcc) or defined(llvm_gcc) or defined(clang):
+when defined(noIntrinsicsEndians):
+  const useBuiltinSwap = false
+
+elif defined(gcc) or defined(llvm_gcc) or defined(clang):
   const useBuiltinSwap = true
 
   func builtinSwap16(a: uint16): uint16 {.
@@ -58,6 +69,7 @@ elif defined(vcc):
 
   func builtinSwap64(a: uint64): uint64 {.
       importc: "_byteswap_uint64", nodecl, header: "<intrin.h>".}
+
 else:
   const useBuiltinSwap = false
 
@@ -75,20 +87,20 @@ when useBuiltinSwap:
     copyMem(outp, addr tmp, sizeof(T))
 
   proc swapEndian64*(outp, inp: pointer) {.inline, noSideEffect, deprecated:
-      "Deprecated since v1.2.0; use `swapEndian` instead".} =
+      "Deprecated since v1.1.0; use `swapEndian` instead".} =
     swapOpImpl(uint64, builtinSwap64)
 
   proc swapEndian32*(outp, inp: pointer) {.inline, noSideEffect, deprecated:
-      "Deprecated since v1.2.0; use `swapEndian` instead".} =
+      "Deprecated since v1.1.0; use `swapEndian` instead".} =
     swapOpImpl(uint32, builtinSwap32)
 
   proc swapEndian16*(outp, inp: pointer) {.inline, noSideEffect, deprecated:
-      "Deprecated since v1.2.0; use `swapEndian` instead".} =
+      "Deprecated since v1.1.0; use `swapEndian` instead".} =
     swapOpImpl(uint16, builtinSwap16)
 
 else:
   proc swapEndian64*(outp, inp: pointer) {.deprecated:
-      "Deprecated since v1.2.0; use `swapEndian` instead".} =
+      "Deprecated since v1.1.0; use `swapEndian` instead".} =
     ## copies `inp` to `outp` swapping bytes. Both buffers are supposed to
     ## contain at least 8 bytes.
     var i = cast[cstring](inp)
@@ -103,7 +115,7 @@ else:
     o[7] = i[0]
 
   proc swapEndian32*(outp, inp: pointer) {.deprecated:
-      "Deprecated since v1.2.0; use `swapEndian` instead".} =
+      "Deprecated since v1.1.0; use `swapEndian` instead".} =
     ## copies `inp` to `outp` swapping bytes. Both buffers are supposed to
     ## contain at least 4 bytes.
     var i = cast[cstring](inp)
@@ -114,7 +126,7 @@ else:
     o[3] = i[0]
 
   proc swapEndian16*(outp, inp: pointer) {.deprecated:
-      "Deprecated since v1.2.0; use `swapEndian` instead".} =
+      "Deprecated since v1.1.0; use `swapEndian` instead".} =
     ## copies `inp` to `outp` swapping bytes. Both buffers are supposed to
     ## contain at least 2 bytes.
     var i = cast[cstring](inp)
@@ -124,51 +136,51 @@ else:
 
 when system.cpuEndian == bigEndian:
   proc littleEndian64*(outp, inp: pointer){.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     swapEndian64(outp, inp)
 
   proc littleEndian32*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     swapEndian32(outp, inp)
 
   proc littleEndian16*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     swapEndian16(outp, inp)
 
   proc bigEndian64*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     copyMem(outp, inp, 8)
 
   proc bigEndian32*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     copyMem(outp, inp, 4)
 
   proc bigEndian16*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     copyMem(outp, inp, 2)
 else:
   proc littleEndian64*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     copyMem(outp, inp, 8)
 
   proc littleEndian32*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     copyMem(outp, inp, 4)
 
   proc littleEndian16*(outp, inp: pointer){.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     copyMem(outp, inp, 2)
 
   proc bigEndian64*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     swapEndian64(outp, inp)
 
   proc bigEndian32*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     swapEndian32(outp, inp)
 
   proc bigEndian16*(outp, inp: pointer) {.inline, deprecated:
-      "Deprecated since v1.2.0; use `fromBytesXX/toBytesXX` instead".} =
+      "Deprecated since v1.1.0; use `fromBytesXX/toBytesXX` instead".} =
     swapEndian16(outp, inp)
 
 
@@ -208,19 +220,19 @@ func swapEndian*[T: SomeNumber](value: T): T {.inline, mySince: (1,1).} =
     value
   elif T is SomeInteger16:
     when nimvm: cast[T](slowSwap16(cast[uint16](value)))
-    else:       cast[T](swap16(cast[uint16](value)))
+    else:       cast[T](    swap16(cast[uint16](value)))
   elif T is SomeNumber32:
     when nimvm: cast[T](slowSwap32(cast[uint32](value)))
-    else:       cast[T](swap32(cast[uint32](value)))
+    else:       cast[T](    swap32(cast[uint32](value)))
   elif T is SomeNumber64:
     when nimvm: cast[T](slowSwap64(cast[uint64](value)))
-    else:       cast[T](swap64(cast[uint64](value)))
+    else:       cast[T](    swap64(cast[uint64](value)))
 
 
 proc swapEndian*(T: typedesc[SomeNumber],
                  buf: pointer) {.inline, mySince: (1,1).} =
   ## Swaps the byte order of a number at a memory location in-place. The type
-  ## of the number has to be passed in as an argument.
+  ## of the number must be passed in as an argument.
   runnableExamples:
     var i = 0xdeadbeef'i32
     swapEndian(int32, i.addr)
@@ -230,10 +242,31 @@ proc swapEndian*(T: typedesc[SomeNumber],
   cast[ptr T](buf)[] = swapEndian(value)
 
 
-proc swapEndian*[T: SomeNumber](a: var openArray[T],
-                                pos: Natural) {.inline, mySince: (1,1).} =
+proc swapEndian*(T: typedesc[SomeNumber], buf: var openArray[byte],
+                 startIndex: Natural) {.inline, mySince: (1,1).} =
   ## Swaps the byte order of a number in an openarray at index `pos`.
-  a[pos] = swapEndian(a[pos])
+  let i = startIndex
+  assert i < buf.len
+  assert i + sizeof(T) < buf.len
+
+  when nimvm:
+    when T is SomeInteger8:
+      discard
+
+    elif T is SomeInteger16:
+      swap(buf[i],   buf[i+1])
+
+    elif T is SomeNumber32:
+      swap(buf[i],   buf[i+3])
+      swap(buf[i+1], buf[i+2])
+
+    elif T is SomeNumber64:
+      swap(buf[i],   buf[i+7])
+      swap(buf[i+1], buf[i+6])
+      swap(buf[i+2], buf[i+5])
+      swap(buf[i+3], buf[i+4])
+  else:
+    swapEndian(T, buf[startIndex].addr)
 
 
 func toBE*[T: SomeNumber](value: T): T {.inline, mySince: (1,1).} =
@@ -272,12 +305,32 @@ proc toBytesBE*[T: SomeNumber](value: T, buf: pointer)
   when system.cpuEndian == bigEndian: cast[ptr T](buf)[] = value
   else: cast[ptr T](buf)[] = swapEndian(value)
 
-proc toBytesBE*[T: SomeNumber](value: T, a: var openArray[T],
-                               pos: Natural) {.inline, mySince: (1,1).} =
-  ## Writes a number to an openarray at index `pos` as a big-endian byte
-  ## sequence.
-  when system.cpuEndian == bigEndian: a[pos] = value
-  else: a[pos] = swapEndian(value)
+
+proc slowToBytes*[T: SomeNumber](destEndian: Endianness,
+                                 value: T, buf: var openArray[byte],
+                                 startIndex: Natural) =
+  template toBytes(S: typedesc[SomeInteger]) =
+    let a = if destEndian == littleEndian: cast[S](value)
+            else: cast[S](swapEndian(value))
+    for i in 0..<sizeof(T):
+      buf[startIndex + i] = byte((a shr (i * 8)) and 0xff)
+
+  when T is SomeInteger8:  toBytes(uint8)
+  elif T is SomeInteger16: toBytes(uint16)
+  elif T is SomeNumber32:  toBytes(uint32)
+  elif T is SomeNumber64:  toBytes(uint64)
+
+
+proc toBytesBE*[T: SomeNumber](value: T, buf: var openArray[byte],
+                               startIndex: Natural)
+    {.inline, mySince: (1,1).} =
+  ## Writes a number to an openarray at index `startIndex` as a big-endian
+  ## byte sequence.
+  assert startIndex < buf.len
+  assert startIndex + sizeof(T) < buf.len
+  when nimvm: slowToBytes(bigEndian, value, buf, startIndex)
+  else: toBytesBE(value, buf[startIndex].addr)
+
 
 proc toBytesLE*[T: SomeNumber](value: T,
                                buf: pointer) {.inline, mySince: (1,1).} =
@@ -285,17 +338,21 @@ proc toBytesLE*[T: SomeNumber](value: T,
   when system.cpuEndian == littleEndian: cast[ptr T](buf)[] = value
   else: cast[ptr T](buf)[] = swapEndian(value)
 
-proc toBytesLE*[T: SomeNumber](value: T, a: var openArray[T],
-                               pos: Natural) {.inline, mySince: (1,1).} =
-  ## Writes a number to an openarray at index `pos` as a little-endian byte sequence.
-  when system.cpuEndian == littleEndian: a[pos] = value
-  else: a[pos] = swapEndian(value)
+proc toBytesLE*[T: SomeNumber](value: T, buf: var openArray[byte],
+                               startIndex: Natural)
+    {.inline, mySince: (1,1).} =
+  ## Writes a number to an openarray at index `startIndex` as a little-endian
+  ## byte sequence.
+  assert startIndex < buf.len
+  assert startIndex + sizeof(T) < buf.len
+  when nimvm: slowToBytes(littleEndian, value, buf, startIndex)
+  else: toBytesLE(value, buf[startIndex].addr)
 
 
 func fromBytesBE*(T: typedesc[SomeNumber],
                   buf: pointer): T {.inline, mySince: (1,1).} =
   ## Reads a number represented as a big-endian byte sequence from a memory
-  ## buffer. The type of the number has to be passed in as an argument.
+  ## buffer. The type of the number must be passed in as an argument.
   runnableExamples:
     var buf: array[4, uint8]
     buf[0] = 0xde
@@ -309,18 +366,35 @@ func fromBytesBE*(T: typedesc[SomeNumber],
   else: swapEndian(a)
 
 
-func fromBytesBE*[T: SomeNumber](a: openArray[T],
-                                 pos: Natural): T {.inline, mySince: (1,1).} =
-  ## Reads a number represented as a big-endian byte sequence from an
-  ## openarray at index `pos` .
-  let v = a[pos]
-  when system.cpuEndian == bigEndian: v
-  else: swapEndian(v)
+func slowFromBytes(T: typedesc[SomeNumber], srcEndian: Endianness,
+                   buf: openArray[byte], startIndex: Natural): T =
+  template fromBytes(S: typedesc[SomeInteger]): T =
+    var a = S(0)
+    for i in 0..<sizeof(T):
+      let s = if srcEndian == bigEndian: (sizeof(T) - i - 1) * 8
+              else: i * 8
+      a = a or (S(buf[startIndex + i]) shl s)
+    cast[T](a)
+
+  when T is SomeInteger8:  result = fromBytes(uint8)
+  elif T is SomeInteger16: result = fromBytes(uint16)
+  elif T is SomeNumber32:  result = fromBytes(uint32)
+  elif T is SomeNumber64:  result = fromBytes(uint64)
+
+
+func fromBytesBE*(T: typedesc[SomeNumber], buf: openArray[byte],
+                  startIndex: Natural): T {.inline, mySince: (1,1).} =
+  ## Reads a number represented as a big-endian byte sequence from a buffer.
+  ## The type of the number must be passed in as an argument.
+  assert startIndex < buf.len
+  assert startIndex + sizeof(T) < buf.len
+  when nimvm: slowFromBytes(T, bigEndian, buf, startIndex)
+  else: fromBytesBE(T, buf[startIndex].unsafeAddr)
 
 func fromBytesLE*(T: typedesc[SomeNumber],
                   buf: pointer): T {.inline, mySince: (1,1).} =
   ## Reads a number represented as a little-endian byte sequence from a memory
-  ## buffer. The type of the number has to be passed in as an argument.
+  ## buffer. The type of the number must be passed in as an argument.
   runnableExamples:
     var buf: array[4, uint8]
     buf[0] = 0xef
@@ -333,13 +407,15 @@ func fromBytesLE*(T: typedesc[SomeNumber],
   when system.cpuEndian == littleEndian: a
   else: swapEndian(a)
 
-func fromBytesLE*[T: SomeNumber](a: openArray[T],
-                                 pos: Natural): T {.inline, mySince: (1,1).} =
-  ## Reads a number represented as a little-endian byte sequence from an
-  ## openarray at index `pos` .
-  let v = a[pos]
-  when system.cpuEndian == littleEndian: v
-  else: swapEndian(v)
+
+func fromBytesLE*(T: typedesc[SomeNumber], buf: openArray[byte],
+                  startIndex: Natural): T {.inline, mySince: (1,1).} =
+  ## Reads a number represented as a little-endian byte sequence from
+  ## a buffer.  The type of the number must be passed in as an argument.
+  assert startIndex < buf.len
+  assert startIndex + sizeof(T) < buf.len
+  when nimvm: slowFromBytes(T, littleEndian, buf, startIndex)
+  else: fromBytesLE(T, buf[startIndex].unsafeAddr)
 
 
 when defined(testing) and isMainModule:
@@ -380,19 +456,62 @@ when defined(testing) and isMainModule:
   assert swapEndian(f32) == f32_rev
   assert swapEndian(f64) == f64_rev
 
-  var i32arr: array[2, int32]
-  i32arr[1] = i32
-  swapEndian(i32arr, 1)
-  assert i32arr[1] == i32_rev
-  swapEndian(int32, i32arr[1].addr)
-  assert i32arr[1] == i32
+  var buf: array[12, byte]
+  buf[3] = 0xde
+  buf[4] = 0xad
+  buf[5] = 0xbe
+  buf[6] = 0xef
+  buf[7] = 0xca
+  buf[8] = 0xfe
+  buf[9] = 0xba
+  buf[10] = 0xbe
 
-  var f64arr: array[2, float64]
-  f64arr[1] = f64
-  swapEndian(f64arr, 1)
-  assert f64arr[1] == f64_rev
-  swapEndian(int64, f64arr[1].addr)
-  assert f64arr[1] == f64
+  const magicValue64 = 0xdeadbeefcafebabe'u64
+  swapEndian(int8, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+  swapEndian(uint8, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+  swapEndian(int8, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+  swapEndian(uint8, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+  swapEndian(int16, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == 0xaddebeefcafebabe'u64
+  swapEndian(uint16, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+  swapEndian(int16, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == 0xaddebeefcafebabe'u64
+  swapEndian(uint16, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+  swapEndian(int32, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == 0xefbeaddecafebabe'u64
+  swapEndian(uint32, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+  swapEndian(int32, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == 0xefbeaddecafebabe'u64
+  swapEndian(uint32, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+  swapEndian(int64, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == 0xbebafecaefbeadde'u64
+  swapEndian(uint64, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+  swapEndian(int64, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == 0xbebafecaefbeadde'u64
+  swapEndian(uint64, buf[3].addr)
+  assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+  swapEndian(float32, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == 0xefbeaddecafebabe'u64
+  swapEndian(float32, buf, 3)
+  assert fromBytesBE(uint64, buf[3].addr) == magicValue64
+
+  swapEndian(float64, buf, 3)
+  assert fromBytesBE(uint64, buf, 3) == 0xbebafecaefbeadde'u64
+  swapEndian(float64, buf, 3)
+  assert fromBytesBE(uint64, buf[3].addr) == magicValue64
 
   var
     i8_var = 0xf2'i8
@@ -451,6 +570,17 @@ when defined(testing) and isMainModule:
     assert fromBytesBE(float32, f32_var.addr) == f32
     assert fromBytesBE(float64, f64_var.addr) == f64
 
+    assert fromBytesBE(   int8, buf, 3) == 0xde'i8
+    assert fromBytesBE(  uint8, buf, 3) == 0xde'u8
+    assert fromBytesBE(  int16, buf, 3) == 0xdead'i16
+    assert fromBytesBE( uint16, buf, 3) == 0xdead'u16
+    assert fromBytesBE(  int32, buf, 3) == 0xdeadbeef'i32
+    assert fromBytesBE( uint32, buf, 3) == 0xdeadbeef'u32
+    assert fromBytesBE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+    assert fromBytesBE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+    assert fromBytesBE(float32, buf, 3) == 0xdeadbeef'f32
+    assert fromBytesBE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
+
     assert fromBytesLE(   int8,  i8_var.addr) == i8
     assert fromBytesLE(  uint8,  u8_var.addr) == u8
     assert fromBytesLE(  int16, i16_var.addr) == i16_rev
@@ -461,6 +591,19 @@ when defined(testing) and isMainModule:
     assert fromBytesLE( uint64, u64_var.addr) == u64_rev
     assert fromBytesLE(float32, f32_var.addr) == f32_rev
     assert fromBytesLE(float64, f64_var.addr) == f64_rev
+
+    swapEndian(int64, buf, 3)
+
+    assert fromBytesLE(   int8, buf, 3) == 0xbe'i8
+    assert fromBytesLE(  uint8, buf, 3) == 0xbe'u8
+    assert fromBytesLE(  int16, buf, 3) == 0xbabe'i16
+    assert fromBytesLE( uint16, buf, 3) == 0xbabe'u16
+    assert fromBytesLE(  int32, buf, 3) == 0xcafebabe'i32
+    assert fromBytesLE( uint32, buf, 3) == 0xcafebabe'u32
+    assert fromBytesLE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+    assert fromBytesLE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+    assert fromBytesLE(float32, buf, 3) == 0xcafebabe'f32
+    assert fromBytesLE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
 
     toBytesBE(i8 ,  i8_out.addr); assert  i8_out == i8
     toBytesBE(u8 ,  u8_out.addr); assert  u8_out == u8
@@ -473,6 +616,17 @@ when defined(testing) and isMainModule:
     toBytesBE(f32, f32_out.addr); assert f32_out == f32
     toBytesBE(f64, f64_out.addr); assert f64_out == f64
 
+    toBytesBE(i8 , buf, 2); assert fromBytesBE(   int8, buf, 2) == i8
+    toBytesBE(u8 , buf, 2); assert fromBytesBE(  uint8, buf, 2) == u8
+    toBytesBE(i16, buf, 2); assert fromBytesBE(  int16, buf, 2) == i16
+    toBytesBE(u16, buf, 2); assert fromBytesBE( uint16, buf, 2) == u16
+    toBytesBE(i32, buf, 2); assert fromBytesBE(  int32, buf, 2) == i32
+    toBytesBE(u32, buf, 2); assert fromBytesBE( uint32, buf, 2) == u32
+    toBytesBE(i64, buf, 2); assert fromBytesBE(  int64, buf, 2) == i64
+    toBytesBE(u64, buf, 2); assert fromBytesBE( uint64, buf, 2) == u64
+    toBytesBE(f32, buf, 2); assert fromBytesBE(float32, buf, 2) == f32
+    toBytesBE(f64, buf, 2); assert fromBytesBE(float64, buf, 2) == f64
+
     toBytesLE(i8 ,  i8_out.addr); assert  i8_out == i8
     toBytesLE(u8 ,  u8_out.addr); assert  u8_out == u8
     toBytesLE(i16, i16_out.addr); assert i16_out == i16_rev
@@ -484,23 +638,18 @@ when defined(testing) and isMainModule:
     toBytesLE(f32, f32_out.addr); assert f32_out == f32_rev
     toBytesLE(f64, f64_out.addr); assert f64_out == f64_rev
 
-    var i16arr: array[2, int16]
-    toBytesLE(i16, i16arr, 0)
-    toBytesBE(i16, i16arr, 1)
-    assert i16arr[0] == i16_rev
-    assert i16arr[1] == i16
-    assert fromBytesLE(i16arr, 0) == i16
-    assert fromBytesBE(i16arr, 1) == i16
+    toBytesLE(i8 , buf, 2); assert fromBytesLE(   int8, buf, 2) == i8
+    toBytesLE(u8 , buf, 2); assert fromBytesLE(  uint8, buf, 2) == u8
+    toBytesLE(i16, buf, 2); assert fromBytesLE(  int16, buf, 2) == i16
+    toBytesLE(u16, buf, 2); assert fromBytesLE( uint16, buf, 2) == u16
+    toBytesLE(i32, buf, 2); assert fromBytesLE(  int32, buf, 2) == i32
+    toBytesLE(u32, buf, 2); assert fromBytesLE( uint32, buf, 2) == u32
+    toBytesLE(i64, buf, 2); assert fromBytesLE(  int64, buf, 2) == i64
+    toBytesLE(u64, buf, 2); assert fromBytesLE( uint64, buf, 2) == u64
+    toBytesLE(f32, buf, 2); assert fromBytesLE(float32, buf, 2) == f32
+    toBytesLE(f64, buf, 2); assert fromBytesLE(float64, buf, 2) == f64
 
-    var u64arr: array[2, uint64]
-    toBytesLE(u64, u64arr, 0)
-    toBytesBE(u64, u64arr, 1)
-    assert u64arr[0] == u64_rev
-    assert u64arr[1] == u64
-    assert fromBytesLE(u64arr, 0) == u64
-    assert fromBytesBE(u64arr, 1) == u64
-
-  else:
+  else:  # little-endian
     assert toBE( i8) == i8
     assert toBE( u8) == u8
     assert toBE(i16) == i16_rev
@@ -534,6 +683,17 @@ when defined(testing) and isMainModule:
     assert fromBytesBE(float32, f32_var.addr) == f32_rev
     assert fromBytesBE(float64, f64_var.addr) == f64_rev
 
+    assert fromBytesBE(   int8, buf, 3) == 0xde'i8
+    assert fromBytesBE(  uint8, buf, 3) == 0xde'u8
+    assert fromBytesBE(  int16, buf, 3) == 0xdead'i16
+    assert fromBytesBE( uint16, buf, 3) == 0xdead'u16
+    assert fromBytesBE(  int32, buf, 3) == 0xdeadbeef'i32
+    assert fromBytesBE( uint32, buf, 3) == 0xdeadbeef'u32
+    assert fromBytesBE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+    assert fromBytesBE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+    assert fromBytesBE(float32, buf, 3) == 0xdeadbeef'f32
+    assert fromBytesBE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
+
     assert fromBytesLE(   int8,  i8_var.addr) == i8
     assert fromBytesLE(  uint8,  u8_var.addr) == u8
     assert fromBytesLE(  int16, i16_var.addr) == i16
@@ -544,6 +704,19 @@ when defined(testing) and isMainModule:
     assert fromBytesLE( uint64, u64_var.addr) == u64
     assert fromBytesLE(float32, f32_var.addr) == f32
     assert fromBytesLE(float64, f64_var.addr) == f64
+
+    swapEndian(int64, buf, 3)
+
+    assert fromBytesLE(   int8, buf, 3) == 0xbe'i8
+    assert fromBytesLE(  uint8, buf, 3) == 0xbe'u8
+    assert fromBytesLE(  int16, buf, 3) == 0xbabe'i16
+    assert fromBytesLE( uint16, buf, 3) == 0xbabe'u16
+    assert fromBytesLE(  int32, buf, 3) == 0xcafebabe'i32
+    assert fromBytesLE( uint32, buf, 3) == 0xcafebabe'u32
+    assert fromBytesLE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+    assert fromBytesLE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+    assert fromBytesLE(float32, buf, 3) == 0xcafebabe'f32
+    assert fromBytesLE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
 
     toBytesBE(i8 ,  i8_out.addr); assert  i8_out == i8
     toBytesBE(u8 ,  u8_out.addr); assert  u8_out == u8
@@ -556,6 +729,17 @@ when defined(testing) and isMainModule:
     toBytesBE(f32, f32_out.addr); assert f32_out == f32_rev
     toBytesBE(f64, f64_out.addr); assert f64_out == f64_rev
 
+    toBytesBE(i8 , buf, 2); assert fromBytesBE(   int8, buf, 2) == i8
+    toBytesBE(u8 , buf, 2); assert fromBytesBE(  uint8, buf, 2) == u8
+    toBytesBE(i16, buf, 2); assert fromBytesBE(  int16, buf, 2) == i16
+    toBytesBE(u16, buf, 2); assert fromBytesBE( uint16, buf, 2) == u16
+    toBytesBE(i32, buf, 2); assert fromBytesBE(  int32, buf, 2) == i32
+    toBytesBE(u32, buf, 2); assert fromBytesBE( uint32, buf, 2) == u32
+    toBytesBE(i64, buf, 2); assert fromBytesBE(  int64, buf, 2) == i64
+    toBytesBE(u64, buf, 2); assert fromBytesBE( uint64, buf, 2) == u64
+    toBytesBE(f32, buf, 2); assert fromBytesBE(float32, buf, 2) == f32
+    toBytesBE(f64, buf, 2); assert fromBytesBE(float64, buf, 2) == f64
+
     toBytesLE(i8 ,  i8_out.addr); assert  i8_out == i8
     toBytesLE(u8 ,  u8_out.addr); assert  u8_out == u8
     toBytesLE(i16, i16_out.addr); assert i16_out == i16
@@ -567,23 +751,25 @@ when defined(testing) and isMainModule:
     toBytesLE(f32, f32_out.addr); assert f32_out == f32
     toBytesLE(f64, f64_out.addr); assert f64_out == f64
 
-    var i16arr: array[2, int16]
-    toBytesLE(i16, i16arr, 0)
-    toBytesBE(i16, i16arr, 1)
-    assert i16arr[0] == i16
-    assert i16arr[1] == i16_rev
-    assert fromBytesLE(i16arr, 0) == i16
-    assert fromBytesBE(i16arr, 1) == i16
+    toBytesLE(i8 , buf, 2); assert fromBytesLE(   int8, buf, 2) == i8
+    toBytesLE(u8 , buf, 2); assert fromBytesLE(  uint8, buf, 2) == u8
+    toBytesLE(i16, buf, 2); assert fromBytesLE(  int16, buf, 2) == i16
+    toBytesLE(u16, buf, 2); assert fromBytesLE( uint16, buf, 2) == u16
+    toBytesLE(i32, buf, 2); assert fromBytesLE(  int32, buf, 2) == i32
+    toBytesLE(u32, buf, 2); assert fromBytesLE( uint32, buf, 2) == u32
+    toBytesLE(i64, buf, 2); assert fromBytesLE(  int64, buf, 2) == i64
+    toBytesLE(u64, buf, 2); assert fromBytesLE( uint64, buf, 2) == u64
+    toBytesLE(f32, buf, 2); assert fromBytesLE(float32, buf, 2) == f32
+    toBytesLE(f64, buf, 2); assert fromBytesLE(float64, buf, 2) == f64
 
-    var u64arr: array[2, uint64]
-    toBytesLE(u64, u64arr, 0)
-    toBytesBE(u64, u64arr, 1)
-    assert u64arr[0] == u64
-    assert u64arr[1] == u64_rev
-    assert fromBytesLE(u64arr, 0) == u64
-    assert fromBytesBE(u64arr, 1) == u64
 
   # NimVM tests
+  # -----------
+  # Most float32 tests are commented out because they crash the VM.
+  # This is a known limitation, the VM only supports float64 currently.
+  #
+  # See also: https://github.com/nim-lang/Nim/issues/13479
+  #
   static:
     const
       i8 = 0xf2'i8
@@ -619,19 +805,47 @@ when defined(testing) and isMainModule:
     assert swapEndian(u32) == u32_rev
     assert swapEndian(i64) == i64_rev
     assert swapEndian(u64) == u64_rev
-#   TODO NimVM bug, see https://github.com/nim-lang/Nim/issues/13479
 #    assert swapEndian(f32) == f32_rev
     assert swapEndian(f64) == f64_rev
 
-    var i32arr: array[2, int32]
-    i32arr[1] = i32
-    swapEndian(i32arr, 1)
-    assert i32arr[1] == i32_rev
+    var buf: array[12, byte]
+    buf[3] = 0xde
+    buf[4] = 0xad
+    buf[5] = 0xbe
+    buf[6] = 0xef
+    buf[7] = 0xca
+    buf[8] = 0xfe
+    buf[9] = 0xba
+    buf[10] = 0xbe
 
-    var f64arr: array[2, float64]
-    f64arr[1] = f64
-    swapEndian(f64arr, 1)
-    assert f64arr[1] == f64_rev
+    const magicValue64 = 0xdeadbeefcafebabe'u64
+    swapEndian(int8, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == magicValue64
+    swapEndian(uint8, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+    swapEndian(int16, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == 0xaddebeefcafebabe'u64
+    swapEndian(uint16, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+    swapEndian(int32, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == 0xefbeaddecafebabe'u64
+    swapEndian(uint32, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+    swapEndian(int64, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == 0xbebafecaefbeadde'u64
+    swapEndian(uint64, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == magicValue64
+
+    swapEndian(float32, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == 0xefbeaddecafebabe'u64
+    swapEndian(float32, buf, 3)
+
+    swapEndian(float64, buf, 3)
+    assert fromBytesBE(uint64, buf, 3) == 0xbebafecaefbeadde'u64
+    swapEndian(float64, buf, 3)
 
     when system.cpuEndian == bigEndian:
       assert toBE( i8) == i8
@@ -653,27 +867,56 @@ when defined(testing) and isMainModule:
       assert toLE(u32) == u32_rev
       assert toLE(i64) == i64_rev
       assert toLE(u64) == u64_rev
-#   TODO NimVM bug, see https://github.com/nim-lang/Nim/issues/13479
-#      assert toLE(f32) == f32_rev
+      assert toLE(f32) == f32_rev
       assert toLE(f64) == f64_rev
 
-      var i16arr: array[2, int16]
-      toBytesLE(i16, i16arr, 0)
-      toBytesBE(i16, i16arr, 1)
-      assert i16arr[0] == i16_rev
-      assert i16arr[1] == i16
-      assert fromBytesLE(i16arr, 0) == i16
-      assert fromBytesBE(i16arr, 1) == i16
+      assert fromBytesBE(   int8, buf, 3) == 0xde'i8
+      assert fromBytesBE(  uint8, buf, 3) == 0xde'u8
+      assert fromBytesBE(  int16, buf, 3) == 0xdead'i16
+      assert fromBytesBE( uint16, buf, 3) == 0xdead'u16
+      assert fromBytesBE(  int32, buf, 3) == 0xdeadbeef'i32
+      assert fromBytesBE( uint32, buf, 3) == 0xdeadbeef'u32
+      assert fromBytesBE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+      assert fromBytesBE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+      assert fromBytesBE(float32, buf, 3) == 0xdeadbeef'f32
+      assert fromBytesBE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
 
-      var u64arr: array[2, uint64]
-      toBytesLE(u64, u64arr, 0)
-      toBytesBE(u64, u64arr, 1)
-      assert u64arr[0] == u64_rev
-      assert u64arr[1] == u64
-      assert fromBytesLE(u64arr, 0) == u64
-      assert fromBytesBE(u64arr, 1) == u64
+      swapEndian(int64, buf, 3)
 
-    else:
+      assert fromBytesLE(   int8, buf, 3) == 0xbe'i8
+      assert fromBytesLE(  uint8, buf, 3) == 0xbe'u8
+      assert fromBytesLE(  int16, buf, 3) == 0xbabe'i16
+      assert fromBytesLE( uint16, buf, 3) == 0xbabe'u16
+      assert fromBytesLE(  int32, buf, 3) == 0xcafebabe'i32
+      assert fromBytesLE( uint32, buf, 3) == 0xcafebabe'u32
+      assert fromBytesLE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+      assert fromBytesLE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+      assert fromBytesLE(float32, buf, 3) == 0xcafebabe'f32
+      assert fromBytesLE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
+
+      toBytesBE(i8 , buf, 2); assert fromBytesBE(   int8, buf, 2) == i8
+      toBytesBE(u8 , buf, 2); assert fromBytesBE(  uint8, buf, 2) == u8
+      toBytesBE(i16, buf, 2); assert fromBytesBE(  int16, buf, 2) == i16
+      toBytesBE(u16, buf, 2); assert fromBytesBE( uint16, buf, 2) == u16
+      toBytesBE(i32, buf, 2); assert fromBytesBE(  int32, buf, 2) == i32
+      toBytesBE(u32, buf, 2); assert fromBytesBE( uint32, buf, 2) == u32
+      toBytesBE(i64, buf, 2); assert fromBytesBE(  int64, buf, 2) == i64
+      toBytesBE(u64, buf, 2); assert fromBytesBE( uint64, buf, 2) == u64
+      toBytesBE(f32, buf, 2); assert fromBytesBE(float32, buf, 2) == f32
+      toBytesBE(f64, buf, 2); assert fromBytesBE(float64, buf, 2) == f64
+
+      toBytesLE(i8 , buf, 2); assert fromBytesLE(   int8, buf, 2) == i8
+      toBytesLE(u8 , buf, 2); assert fromBytesLE(  uint8, buf, 2) == u8
+      toBytesLE(i16, buf, 2); assert fromBytesLE(  int16, buf, 2) == i16
+      toBytesLE(u16, buf, 2); assert fromBytesLE( uint16, buf, 2) == u16
+      toBytesLE(i32, buf, 2); assert fromBytesLE(  int32, buf, 2) == i32
+      toBytesLE(u32, buf, 2); assert fromBytesLE( uint32, buf, 2) == u32
+      toBytesLE(i64, buf, 2); assert fromBytesLE(  int64, buf, 2) == i64
+      toBytesLE(u64, buf, 2); assert fromBytesLE( uint64, buf, 2) == u64
+      toBytesLE(f32, buf, 2); assert fromBytesLE(float32, buf, 2) == f32
+      toBytesLE(f64, buf, 2); assert fromBytesLE(float64, buf, 2) == f64
+
+    else:  # little-endian
       assert toBE( i8) == i8
       assert toBE( u8) == u8
       assert toBE(i16) == i16_rev
@@ -682,7 +925,6 @@ when defined(testing) and isMainModule:
       assert toBE(u32) == u32_rev
       assert toBE(i64) == i64_rev
       assert toBE(u64) == u64_rev
-#   TODO NimVM bug, see https://github.com/nim-lang/Nim/issues/13479
 #      assert toBE(f32) == f32_rev
       assert toBE(f64) == f64_rev
 
@@ -697,19 +939,49 @@ when defined(testing) and isMainModule:
       assert toLE(f32) == f32
       assert toLE(f64) == f64
 
-      var i16arr: array[2, int16]
-      toBytesLE(i16, i16arr, 0)
-      toBytesBE(i16, i16arr, 1)
-      assert i16arr[0] == i16
-      assert i16arr[1] == i16_rev
-      assert fromBytesLE(i16arr, 0) == i16
-      assert fromBytesBE(i16arr, 1) == i16
+      assert fromBytesBE(   int8, buf, 3) == 0xde'i8
+      assert fromBytesBE(  uint8, buf, 3) == 0xde'u8
+      assert fromBytesBE(  int16, buf, 3) == 0xdead'i16
+      assert fromBytesBE( uint16, buf, 3) == 0xdead'u16
+      assert fromBytesBE(  int32, buf, 3) == 0xdeadbeef'i32
+      assert fromBytesBE( uint32, buf, 3) == 0xdeadbeef'u32
+      assert fromBytesBE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+      assert fromBytesBE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+#      assert fromBytesBE(float32, buf, 3) == 0xdeadbeef'f32
+      assert fromBytesBE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
 
-      var u64arr: array[2, uint64]
-      toBytesLE(u64, u64arr, 0)
-      toBytesBE(u64, u64arr, 1)
-      assert u64arr[0] == u64
-      assert u64arr[1] == u64_rev
-      assert fromBytesLE(u64arr, 0) == u64
-      assert fromBytesBE(u64arr, 1) == u64
+      swapEndian(int64, buf, 3)
+
+      assert fromBytesLE(   int8, buf, 3) == 0xbe'i8
+      assert fromBytesLE(  uint8, buf, 3) == 0xbe'u8
+      assert fromBytesLE(  int16, buf, 3) == 0xbabe'i16
+      assert fromBytesLE( uint16, buf, 3) == 0xbabe'u16
+      assert fromBytesLE(  int32, buf, 3) == 0xcafebabe'i32
+      assert fromBytesLE( uint32, buf, 3) == 0xcafebabe'u32
+      assert fromBytesLE(  int64, buf, 3) == 0xdeadbeefcafebabe'i64
+      assert fromBytesLE( uint64, buf, 3) == 0xdeadbeefcafebabe'u64
+#      assert fromBytesLE(float32, buf, 3) == 0xcafebabe'f32
+      assert fromBytesLE(float64, buf, 3) == 0xdeadbeefcafebabe'f64
+
+      toBytesBE(i8 , buf, 2); assert fromBytesBE(   int8, buf, 2) == i8
+      toBytesBE(u8 , buf, 2); assert fromBytesBE(  uint8, buf, 2) == u8
+      toBytesBE(i16, buf, 2); assert fromBytesBE(  int16, buf, 2) == i16
+      toBytesBE(u16, buf, 2); assert fromBytesBE( uint16, buf, 2) == u16
+      toBytesBE(i32, buf, 2); assert fromBytesBE(  int32, buf, 2) == i32
+      toBytesBE(u32, buf, 2); assert fromBytesBE( uint32, buf, 2) == u32
+      toBytesBE(i64, buf, 2); assert fromBytesBE(  int64, buf, 2) == i64
+      toBytesBE(u64, buf, 2); assert fromBytesBE( uint64, buf, 2) == u64
+#      toBytesBE(f32, buf, 2); assert fromBytesBE(float32, buf, 2) == f32
+      toBytesBE(f64, buf, 2); assert fromBytesBE(float64, buf, 2) == f64
+
+      toBytesLE(i8 , buf, 2); assert fromBytesLE(   int8, buf, 2) == i8
+      toBytesLE(u8 , buf, 2); assert fromBytesLE(  uint8, buf, 2) == u8
+      toBytesLE(i16, buf, 2); assert fromBytesLE(  int16, buf, 2) == i16
+      toBytesLE(u16, buf, 2); assert fromBytesLE( uint16, buf, 2) == u16
+      toBytesLE(i32, buf, 2); assert fromBytesLE(  int32, buf, 2) == i32
+      toBytesLE(u32, buf, 2); assert fromBytesLE( uint32, buf, 2) == u32
+      toBytesLE(i64, buf, 2); assert fromBytesLE(  int64, buf, 2) == i64
+      toBytesLE(u64, buf, 2); assert fromBytesLE( uint64, buf, 2) == u64
+#      toBytesLE(f32, buf, 2); assert fromBytesLE(float32, buf, 2) == f32
+      toBytesLE(f64, buf, 2); assert fromBytesLE(float64, buf, 2) == f64
 
