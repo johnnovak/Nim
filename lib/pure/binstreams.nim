@@ -303,7 +303,7 @@ when isMainModule:
   block:
     var outf = open(TestFileBigBE, fmWrite)
     var u64: uint64
-    for i in 0..511:
+    for i in 0..<ReadChunkSize*3:
       u64 = if system.cpuEndian == bigEndian: MagicValue64_1 + i.uint64
             else: swapEndian(MagicValue64_1 + i.uint64)
       discard writeBuffer(outf, u64.addr, 8)
@@ -312,7 +312,7 @@ when isMainModule:
   block:
     var outf = open(TestFileBigLE, fmWrite)
     var u64: uint64
-    for i in 0..511:
+    for i in 0..<ReadChunkSize*3:
       u64 = if system.cpuEndian == littleEndian: MagicValue64_1 + i.uint64
             else: swapEndian(MagicValue64_1 + i.uint64)
       discard writeBuffer(outf, u64.addr, 8)
@@ -480,7 +480,7 @@ when isMainModule:
 
       proc readBufTest(numValues: Natural) =
         var fs = newFileStream(TestFileBigBE, bigEndian)
-        var buf: array[1024, uint64]
+        var buf: array[ReadChunkSize*3, uint64]
         let offs = 123
 
         fs.read(buf, offs, numValues)
@@ -493,11 +493,11 @@ when isMainModule:
           assert buf[i] == 0
         fs.close()
 
-      readBufTest(0)    # should do nothing
-      readBufTest(100)  # less than one full internal buffer worth of data
-      readBufTest(128)  # 128*8 = 1024, internal buffer size
-      readBufTest(256)  # 128*8 = 2024, internal buffer size * 2
-      readBufTest(300)  # bit more than 2 full internal buffer worth of data
+      readBufTest(0)
+      readBufTest(10)
+      readBufTest(ReadChunkSize)
+      readBufTest(ReadChunkSize * 2)
+      readBufTest(ReadChunkSize + 10)
 
     # }}}
     block: # {{{ peek/openArray
@@ -580,7 +580,7 @@ when isMainModule:
 
       proc readBufTest(numValues: Natural) =
         var fs = newFileStream(TestFileBigBE, bigEndian)
-        var buf: array[1024, uint64]
+        var buf: array[ReadChunkSize*3, uint64]
         let offs = 123
 
         for n in 0..3:
@@ -596,11 +596,11 @@ when isMainModule:
         assert fs.getPosition() == 0
         fs.close()
 
-      readBufTest(0)    # should do nothing
-      readBufTest(100)  # less than one full internal buffer worth of data
-      readBufTest(128)  # 128*8 = 1024, internal buffer size
-      readBufTest(256)  # 128*8 = 2024, internal buffer size * 2
-      readBufTest(300)  # bit more than 2 full internal buffer worth of data
+      readBufTest(0)
+      readBufTest(10)
+      readBufTest(ReadChunkSize)
+      readBufTest(ReadChunkSize * 2)
+      readBufTest(ReadChunkSize + 10)
 
     # }}}
   # }}}
