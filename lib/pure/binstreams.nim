@@ -20,7 +20,13 @@ when not defined(js):
     MixedEndianFileStream* = ref object
       f: File
 
+  using fs: MixedEndianFileStream | FileStream
+
   # {{{ File stream
+
+  const
+    ReadChunkSize = 512
+    WriteBufSize = 512
 
   proc newFileStream*(f: File, endian: Endianness): FileStream =
     new(result)
@@ -44,108 +50,54 @@ when not defined(js):
       raise newIOError("cannot open file")
 
 
-  # Internal implementation
-
-  using fs: MixedEndianFileStream | FileStream
-
-  proc readAndSwap(fs; T: typedesc[SomeNumber],
-                   buf: pointer, numValues: Natural) =
-    const ReadBufSize = 1024
+  proc readAndSwap[T: SomeNumber](fs; buf: var openArray[T],
+                                  startIndex, numValues: Natural) =
     var
-      readBuf {.noinit.}: array[ReadBufSize, byte]
-      readArr = cast[ptr UncheckedArray[T]](readBuf[0].addr)
-      readArrMaxValues = ReadBufSize div sizeof(T)
-      destArr = cast[ptr UncheckedArray[T]](buf)
-      destPos = 0
       valuesLeft = numValues
+      bufIndex = startIndex
 
     while valuesLeft > 0:
       let
-        valuesToRead = min(valuesLeft, readArrMaxValues)
+        valuesToRead = min(valuesLeft, ReadChunkSize)
         bytesToRead = valuesToRead * sizeof(T)
-        bytesRead = readBytes(fs.f, readBuf, 0, bytesToRead)
+        bytesRead = readBuffer(fs.f, buf[bufIndex].addr, bytesToRead)
+        valuesRead = valuesToRead
 
       if bytesRead != bytesToRead:
         raise newIOError("cannot read from stream")
-      dec(valuesLeft, valuesToRead)
+      dec(valuesLeft, valuesRead)
 
-      for i in 0..<valuesToRead:
-        destArr[destPos] = swapEndian(readArr[i])
-        inc(destPos)
-
-  proc read(fs; T: typedesc[SomeNumber], srcEndian: Endianness,
-            buf: pointer, numValues: Natural) =
-    if system.cpuEndian == srcEndian:
-      let bytesToRead = numValues * sizeof(T)
-      if readBuffer(fs.f, buf, bytesToRead) != bytesToRead:
-        raise newIOError("cannot read from stream")
-    else:
-      readAndSwap(fs, T, buf, numValues)
-
-  proc peek(fs; T: typedesc[SomeNumber], srcEndian: Endianness,
-            buf: pointer, numValues: Natural) =
-    let pos = fs.getPosition()
-    defer: fs.setPosition(pos)
-    read(fs, T, srcEndian, buf, numValues)
-
-  proc readOpenArray[T: SomeNumber](fs; buf: var openArray[T],
-                                    startIndex, numValues: Natural,
-                                    srcEndian: Endianness) =
-    assert startIndex < buf.len
-    assert startIndex + numValues <= buf.len
-    fs.read(T, srcEndian, buf[startIndex].addr, numValues)
-
-  proc peekOpenArray[T: SomeNumber](fs; buf: var openArray[T],
-                                    startIndex, numValues: Natural,
-                                    srcEndian: Endianness) =
-    let pos = fs.getPosition()
-    defer: fs.setPosition(pos)
-    fs.readOpenArray(buf, startIndex, numValues, srcEndian)
+      for i in bufIndex..<bufIndex + valuesRead:
+        buf[i] = swapEndian(buf[i])
+#        TODO
+#        swapEndian(buf[i])
+      inc(bufIndex, valuesRead)
 
 
-  proc swapAndWrite(fs; T: typedesc[SomeNumber],
-                    buf: pointer, numValues: Natural) =
-    const WriteBufSize = 1024
+  proc swapAndWrite[T: SomeNumber](fs; buf: openArray[T],
+                                   startIndex, numValues: Natural) =
     var
-      writeBuf {.noinit.}: array[WriteBufSize, byte]
-      writeArr = cast[ptr UncheckedArray[T]](writeBuf[0].addr)
-      writeArrMaxValues = WriteBufSize div sizeof(T)
-      srcArr = cast[ptr UncheckedArray[T]](buf)
-      srcPos = 0
+      writeBuf {.noinit.}: array[WriteBufSize, T]
       valuesLeft = numValues
+      bufIndex = startIndex
 
     while valuesLeft > 0:
-      let valuesToWrite = min(valuesLeft, writeArrMaxValues)
+      let valuesToWrite = min(valuesLeft, writeBuf.len)
       for i in 0..<valuesToWrite:
-        writeArr[i] = swapEndian(srcArr[srcPos])
-        inc(srcPos)
+        writeBuf[i] = swapEndian(buf[bufIndex])
+#        TODO
+#        writeBuf[i] = buf[bufIndex]
+#         swapEndian(writeBuf[i])
+        inc(bufIndex)
 
       let
         bytesToWrite = valuesToWrite * sizeof(T)
-        bytesWritten = writeBytes(fs.f, writeBuf, 0, bytesToWrite)
+        bytesWritten = writeBuffer(fs.f, writeBuf[0].addr, bytesToWrite)
 
       if bytesWritten != bytesToWrite:
         raise newIOError("cannot write to stream")
       dec(valuesLeft, valuesToWrite)
 
-  proc write(fs; T: typedesc[SomeNumber], destEndian: Endianness,
-             buf: pointer, numValues: Natural) =
-    if system.cpuEndian == destEndian:
-      let bytesToWrite = numValues * sizeof(T)
-      if writeBuffer(fs.f, buf, bytesToWrite) != bytesToWrite:
-        raise newIOError("cannot write to stream")
-    else:
-      swapAndWrite(fs, T, buf, numValues)
-
-  proc writeOpenArray[T: SomeNumber](fs; buf: openArray[T],
-                                     startIndex, numValues: Natural,
-                                     destEndian: Endianness) =
-    assert startIndex < buf.len
-    assert startIndex + numValues <= buf.len
-    fs.write(T, destEndian, buf[startIndex].unsafeAddr, numValues)
-
-
-  # API
 
   proc close*(fs) =
     if fs.f != nil: close(fs.f)
@@ -160,51 +112,51 @@ when not defined(js):
 
   proc getPosition*(fs): int = int(getFilePos(fs.f))
 
-
-  proc read*(fs: FileStream, T: typedesc[SomeNumber]): T =
-    fs.read(T, fs.endian, result.addr, 1)
-
-  proc read*(fs: FileStream, T: typedesc[SomeNumber],
-             buf: pointer, numValues: Natural) =
-    fs.read(T, fs.endian, buf, numValues)
-
   proc read*[T: SomeNumber](fs: FileStream, buf: var openArray[T],
                             startIndex, numValues: Natural) =
-    fs.readOpenArray(buf, startIndex, numValues, fs.endian)
+    if system.cpuEndian == fs.endian:
+      assert startIndex + numValues <= buf.len
+      let
+        bytesToRead = numValues * sizeof(T)
+        bytesRead = readBuffer(fs.f, buf[startIndex].addr, bytesToRead)
+      if bytesRead != bytesToRead:
+        raise newIOError("cannot read from stream")
+    else:
+      fs.readAndSwap(buf, startIndex, numValues)
 
+  proc read*(fs: FileStream, T: typedesc[SomeNumber]): T =
+    var buf {.noinit.}: array[1, T]
+    fs.read(buf, 0, 1)
+    result = buf[0]
 
   proc peek*(fs: FileStream, T: typedesc[SomeNumber]): T =
-    fs.peek(T, fs.endian, result.addr, 1)
-
-  proc peek*(fs: FileStream, T: typedesc[SomeNumber],
-             buf: pointer, numValues: Natural) =
     let pos = fs.getPosition()
     defer: fs.setPosition(pos)
-    fs.peek(T, fs.endian, buf, numValues)
+    fs.read(T)
 
   proc peek*[T: SomeNumber](fs: FileStream, buf: var openArray[T],
                             startIndex, numValues: Natural) =
     let pos = fs.getPosition()
     defer: fs.setPosition(pos)
-    fs.peekOpenArray(buf, startIndex, numValues, fs.endian)
-
-
-  proc peek*[T: SomeNumber](fs: MixedEndianFileStream, buf: var openArray[T],
-                            startIndex, numValues: Natural,
-                            srcEndian: Endianness): T =
-    fs.peekOpenArray(buf, startIndex, numValues, srcEndian)
-
-
-  proc write*[T: SomeNumber](fs: FileStream, value: T) =
-    fs.write(T, fs.endian, value.unsafeAddr, 1)
-
-  proc write*(fs: FileStream, T: typedesc[SomeNumber],
-              buf: pointer, numValues: Natural) =
-    fs.write(T, fs.endian, buf, numValues)
+    fs.read(buf, startIndex, numValues)
 
   proc write*[T: SomeNumber](fs: FileStream, buf: openArray[T],
                              startIndex, numValues: Natural) =
-    fs.writeOpenArray(buf, startIndex, numValues, fs.endian)
+    if system.cpuEndian == fs.endian:
+      assert startIndex + numValues <= buf.len
+      let
+        bytesToWrite = numValues * sizeof(T)
+        bytesWritten = writeBuffer(fs.f, buf[startIndex].unsafeAddr,
+                                   bytesToWrite)
+      if bytesWritten != bytesToWrite:
+        raise newIOError("cannot write to stream")
+    else:
+      fs.swapAndWrite(buf, startIndex, numValues)
+
+  proc write*[T: SomeNumber](fs: FileStream, value: T) =
+    var buf {.noinit.}: array[1, T]
+    buf[0] = value
+    fs.write(buf, 0, 1)
 
 
   # TODO char, string
@@ -235,10 +187,6 @@ when not defined(js):
   proc readBE(fs: MixedEndianFileStream, T: typedesc[SomeNumber]): T =
     fs.read(T, bigEndian, result.addr, 1)
 
-  proc readBE*(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
-               buf: pointer, numValues: Natural) =
-    fs.read(T, bigEndian, buf, numValues)
-
   proc readBE*[T: SomeNumber](fs: MixedEndianFileStream, buf: var openArray[T],
                               startIndex, numValues: Natural) =
     fs.readOpenArray(buf, startIndex, numValues, bigEndian)
@@ -246,10 +194,6 @@ when not defined(js):
 
   proc readLE(fs: MixedEndianFileStream, T: typedesc[SomeNumber]): T =
     fs.read(T, littleEndian, result.addr, 1)
-
-  proc readLE*(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
-               buf: pointer, numValues: Natural) =
-    fs.read(T, littleEndian, buf, numValues)
 
   proc readLE*[T: SomeNumber](fs: MixedEndianFileStream, buf: var openArray[T],
                               startIndex, numValues: Natural) =
@@ -259,10 +203,6 @@ when not defined(js):
   proc read(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
             srcEndian: Endianness): T =
     fs.read(T, srcEndian, result.addr, 1)
-
-  proc read*(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
-             buf: pointer, numValues: Natural, srcEndian: Endianness): T =
-    fs.read(T, srcEndian, buf, numValues)
 
   proc read*[T: SomeNumber](fs: MixedEndianFileStream, buf: var openArray[T],
                             startIndex, numValues: Natural,
@@ -275,10 +215,6 @@ when not defined(js):
   proc peekBE(fs: MixedEndianFileStream, T: typedesc[SomeNumber]): T =
     fs.peek(T, bigEndian, result.addr, 1)
 
-  proc peekBE*(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
-               buf: pointer, numValues: Natural) =
-    fs.peek(T, bigEndian, buf, numValues)
-
   proc peekBE*[T: SomeNumber](fs: MixedEndianFileStream, buf: var openArray[T],
                               startIndex, numValues: Natural) =
     fs.peekOpenArray(buf, startIndex, numValues, bigEndian)
@@ -286,10 +222,6 @@ when not defined(js):
 
   proc peekLE(fs: MixedEndianFileStream, T: typedesc[SomeNumber]): T =
     fs.peek(T, littleEndian, result.addr, 1)
-
-  proc peekLE*(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
-               buf: pointer, numValues: Natural) =
-    fs.peek(T, littleEndian, buf, numValues)
 
   proc peekLE*[T: SomeNumber](fs: MixedEndianFileStream, buf: var openArray[T],
                               startIndex, numValues: Natural) =
@@ -299,10 +231,6 @@ when not defined(js):
   proc peek(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
             srcEndian: Endianness): T =
     fs.peek(T, srcEndian, result.addr, 1)
-
-  proc peek*(fs: MixedEndianFileStream, T: typedesc[SomeNumber],
-             buf: pointer, numValues: Natural, srcEndian: Endianness): T =
-    fs.peek(T, srcEndian, buf, numValues)
 
   # }}}
 
@@ -321,6 +249,7 @@ when isMainModule:
     TestFileLE = "endians-testdata-LE"
     TestFileBigBE = "endians-testdata-big-BE"
     TestFileBigLE = "endians-testdata-big-LE"
+    TestFile = "endians-testfile"
 
   const
     TestFloat64 = 123456789.123456'f64
@@ -331,46 +260,62 @@ when isMainModule:
   # {{{ Test data file creation
   block:
     var outf = open(TestFileBE, fmWrite)
-    var buf: array[16, byte]
-    toBytesBE(MagicValue64_1, buf, 0)
-    toBytesBE(MagicValue64_2, buf, 8)
-    discard writeBytes(outf, buf, 0, 16)
+    var buf: array[2, uint64]
+    when system.cpuEndian == bigEndian:
+      buf[0] = MagicValue64_1
+      buf[1] = MagicValue64_2
+    else:
+      buf[0] = swapEndian(MagicValue64_1)
+      buf[1] = swapEndian(MagicValue64_2)
 
-    toBytesBE(TestFloat32, buf, 0)
-    discard writeBytes(outf, buf, 0, 4)
+    discard writeBuffer(outf, buf[0].addr, 16)
 
-    toBytesBE(TestFloat64, buf, 0)
-    discard writeBytes(outf, buf, 0, 8)
+    var f32 = if system.cpuEndian == bigEndian: TestFloat32
+              else: swapEndian(TestFloat32)
+    discard writeBuffer(outf, f32.addr, 4)
+
+    var f64 = if system.cpuEndian == bigEndian: TestFloat64
+              else: swapEndian(TestFloat64)
+    discard writeBuffer(outf, f64.addr, 8)
     close(outf)
 
   block:
     var outf = open(TestFileLE, fmWrite)
-    var buf: array[16, byte]
-    toBytesLE(MagicValue64_1, buf, 0)
-    toBytesLE(MagicValue64_2, buf, 8)
-    discard writeBytes(outf, buf, 0, 16)
+    var buf: array[2, uint64]
+    when system.cpuEndian == littleEndian:
+      buf[0] = MagicValue64_1
+      buf[1] = MagicValue64_2
+    else:
+      buf[0] = swapEndian(MagicValue64_1)
+      buf[1] = swapEndian(MagicValue64_2)
 
-    toBytesLE(TestFloat32, buf, 0)
-    discard writeBytes(outf, buf, 0, 4)
+    discard writeBuffer(outf, buf[0].addr, 16)
 
-    toBytesLE(TestFloat64, buf, 0)
-    discard writeBytes(outf, buf, 0, 8)
+    var f32 = if system.cpuEndian == littleEndian: TestFloat32
+              else: swapEndian(TestFloat32)
+    discard writeBuffer(outf, f32.addr, 4)
+
+    var f64 = if system.cpuEndian == littleEndian: TestFloat64
+              else: swapEndian(TestFloat64)
+    discard writeBuffer(outf, f64.addr, 8)
     close(outf)
 
   block:
     var outf = open(TestFileBigBE, fmWrite)
-    var buf: array[8, byte]
-    for i in 0..511: # write 4k worth of data
-      toBytesBE(MagicValue64_1 + i.uint64, buf, 0)
-      discard writeBytes(outf, buf, 0, 8)
+    var u64: uint64
+    for i in 0..511:
+      u64 = if system.cpuEndian == bigEndian: MagicValue64_1 + i.uint64
+            else: swapEndian(MagicValue64_1 + i.uint64)
+      discard writeBuffer(outf, u64.addr, 8)
     close(outf)
 
   block:
     var outf = open(TestFileBigLE, fmWrite)
-    var buf: array[8, byte]
-    for i in 0..511: # write 4k worth of data
-      toBytesLE(MagicValue64_1 + i.uint64, buf, 0)
-      discard writeBytes(outf, buf, 0, 8)
+    var u64: uint64
+    for i in 0..511:
+      u64 = if system.cpuEndian == littleEndian: MagicValue64_1 + i.uint64
+            else: swapEndian(MagicValue64_1 + i.uint64)
+      discard writeBuffer(outf, u64.addr, 8)
     close(outf)
 
   # }}}
@@ -419,6 +364,7 @@ when isMainModule:
       assert fs.getPosition == 28
 
       fs.close()
+
     # }}}
     block: # {{{ peek/func
       var fs = newFileStream(TestFileBE, bigEndian)
@@ -448,6 +394,7 @@ when isMainModule:
       assert fs.getPosition() == 20
 
       fs.close()
+
     # }}}
     block: # {{{ read/openArray
       var fs = newFileStream(TestFileBE, bigEndian)
@@ -547,7 +494,7 @@ when isMainModule:
         fs.close()
 
       readBufTest(0)    # should do nothing
-      readBufTest(100)  # less 1 internal buffer worth of data
+      readBufTest(100)  # less than one full internal buffer worth of data
       readBufTest(128)  # 128*8 = 1024, internal buffer size
       readBufTest(256)  # 128*8 = 2024, internal buffer size * 2
       readBufTest(300)  # bit more than 2 full internal buffer worth of data
@@ -650,168 +597,7 @@ when isMainModule:
         fs.close()
 
       readBufTest(0)    # should do nothing
-      readBufTest(100)  # less 1 internal buffer worth of data
-      readBufTest(128)  # 128*8 = 1024, internal buffer size
-      readBufTest(256)  # 128*8 = 2024, internal buffer size * 2
-      readBufTest(300)  # bit more than 2 full internal buffer worth of data
-
-    # }}}
-    block: # {{{ read/pointer
-      var fs = newFileStream(TestFileBE, bigEndian)
-      var inbuf: array[17, byte]
-
-      fs.read(int8, inbuf[1].addr, 1)
-      fs.read(int8, inbuf[2].addr, 1)
-      assert getAs(int8, inbuf, 1) == 0xde'i8
-      assert getAs(int8, inbuf, 2) == 0xad'i8
-
-      fs.setPosition(0)
-      fs.read(uint8, inbuf[1].addr, 1)
-      fs.read(uint8, inbuf[2].addr, 1)
-      assert getAs(uint8, inbuf, 1) == 0xde'u8
-      assert getAs(uint8, inbuf, 2) == 0xad'u8
-
-      fs.setPosition(0)
-      fs.read(int16, inbuf[1].addr, 1)
-      fs.read(int16, inbuf[3].addr, 1)
-      assert getAs(int16, inbuf, 1) == 0xdead'i16
-      assert getAs(int16, inbuf, 3) == 0xbeef'i16
-
-      fs.setPosition(0)
-      fs.read(uint16, inbuf[1].addr, 1)
-      fs.read(uint16, inbuf[3].addr, 1)
-      assert getAs(uint16, inbuf, 1) == 0xdead'u16
-      assert getAs(uint16, inbuf, 3) == 0xbeef'u16
-
-      fs.setPosition(0)
-      fs.read(int32, inbuf[1].addr, 1)
-      fs.read(int32, inbuf[5].addr, 1)
-      assert getAs(int32, inbuf, 1) == 0xdeadbeef'i32
-      assert getAs(int32, inbuf, 5) == 0xcafebabe'i32
-
-      fs.setPosition(0)
-      fs.read(uint32, inbuf[1].addr, 1)
-      fs.read(uint32, inbuf[5].addr, 1)
-      assert getAs(uint32, inbuf, 1) == 0xdeadbeef'u32
-      assert getAs(uint32, inbuf, 5) == 0xcafebabe'u32
-
-      fs.setPosition(0)
-      fs.read(int64, inbuf[1].addr, 1)
-      fs.read(int64, inbuf[9].addr, 1)
-      assert getAs(int64, inbuf, 1) == 0xdeadbeefcafebabe'i64
-      assert getAs(int64, inbuf, 9) == 0xfeedface0d15ea5e'i64
-
-      fs.setPosition(0)
-      fs.read(uint64, inbuf[1].addr, 1)
-      fs.read(uint64, inbuf[9].addr, 1)
-      assert getAs(uint64, inbuf, 1) == 0xdeadbeefcafebabe'u64
-      assert getAs(uint64, inbuf, 9) == 0xfeedface0d15ea5e'u64
-
-      fs.read(float32, inbuf[1].addr, 1)
-      fs.read(float64, inbuf[5].addr, 1)
-      assert getAs(float32, inbuf, 1) == TestFloat32
-      assert getAs(float64, inbuf, 5) == TestFloat64
-      assert fs.getPosition() == 28
-
-      fs.close()
-
-      proc readBufTest(numValues: Natural) =
-        var fs = newFileStream(TestFileBigLE, littleEndian)
-        var buf: array[1024, uint64]
-        let offs = 123
-
-        fs.read(uint64, buf[offs].addr, numValues)
-
-        for i in 0..<offs:
-          assert buf[i] == 0
-        for i in 0..<numValues:
-          assert buf[offs + i] == MagicValue64_1 + i.uint64
-        for i in offs+numValues..buf.high:
-          assert buf[i] == 0
-        fs.close()
-
-      readBufTest(0)    # should do nothing
-      readBufTest(100)  # less 1 internal buffer worth of data
-      readBufTest(128)  # 128*8 = 1024, internal buffer size
-      readBufTest(256)  # 128*8 = 2024, internal buffer size * 2
-      readBufTest(300)  # bit more than 2 full internal buffer worth of data
-
-    # }}}
-    block: # {{{ peek/pointer
-      var fs = newFileStream(TestFileBE, bigEndian)
-      var inbuf: array[17, byte]
-
-      fs.peek(int8, inbuf[1].addr, 1)
-      fs.peek(int8, inbuf[2].addr, 1)
-      assert getAs(int8, inbuf, 1) == 0xde'i8
-      assert getAs(int8, inbuf, 2) == 0xde'i8
-
-      fs.peek(uint8, inbuf[1].addr, 1)
-      fs.peek(uint8, inbuf[2].addr, 1)
-      assert getAs(uint8, inbuf, 1) == 0xde'u8
-      assert getAs(uint8, inbuf, 2) == 0xde'u8
-
-      fs.peek(int16, inbuf[1].addr, 1)
-      fs.peek(int16, inbuf[3].addr, 1)
-      assert getAs(int16, inbuf, 1) == 0xdead'i16
-      assert getAs(int16, inbuf, 3) == 0xdead'i16
-
-      fs.peek(uint16, inbuf[1].addr, 1)
-      fs.peek(uint16, inbuf[3].addr, 1)
-      assert getAs(uint16, inbuf, 1) == 0xdead'u16
-      assert getAs(uint16, inbuf, 3) == 0xdead'u16
-
-      fs.peek(int32, inbuf[1].addr, 1)
-      fs.peek(int32, inbuf[5].addr, 1)
-      assert getAs(int32, inbuf, 1) == 0xdeadbeef'i32
-      assert getAs(int32, inbuf, 5) == 0xdeadbeef'i32
-
-      fs.peek(uint32, inbuf[1].addr, 1)
-      fs.peek(uint32, inbuf[5].addr, 1)
-      assert getAs(uint32, inbuf, 1) == 0xdeadbeef'u32
-      assert getAs(uint32, inbuf, 5) == 0xdeadbeef'u32
-
-      fs.peek(int64, inbuf[1].addr, 1)
-      fs.peek(int64, inbuf[9].addr, 1)
-      assert getAs(int64, inbuf, 1) == 0xdeadbeefcafebabe'i64
-      assert getAs(int64, inbuf, 9) == 0xdeadbeefcafebabe'i64
-
-      fs.peek(uint64, inbuf[1].addr, 1)
-      fs.peek(uint64, inbuf[9].addr, 1)
-      assert getAs(uint64, inbuf, 1) == 0xdeadbeefcafebabe'u64
-      assert getAs(uint64, inbuf, 9) == 0xdeadbeefcafebabe'u64
-
-      assert fs.getPosition() == 0
-      fs.setPosition(16)
-      fs.peek(float32, inbuf[1].addr, 1)
-      fs.setPosition(20)
-      fs.peek(float64, inbuf[5].addr, 1)
-      assert getAs(float32, inbuf, 1) == TestFloat32
-      assert getAs(float64, inbuf, 5) == TestFloat64
-      assert fs.getPosition() == 20
-
-      fs.close()
-
-      proc readBufTest(numValues: Natural) =
-        var fs = newFileStream(TestFileBigBE, bigEndian)
-        var buf: array[1024, uint64]
-        let offs = 123
-
-        for n in 0..3:
-          fs.peek(uint64, buf[offs].addr, numValues)
-
-          for i in 0..<offs:
-            assert buf[i] == 0
-          for i in 0..<numValues:
-            assert buf[offs + i] == MagicValue64_1 + i.uint64
-          for i in offs+numValues..buf.high:
-            assert buf[i] == 0
-
-        assert fs.getPosition() == 0
-        fs.close()
-
-      readBufTest(0)    # should do nothing
-      readBufTest(100)  # less 1 internal buffer worth of data
+      readBufTest(100)  # less than one full internal buffer worth of data
       readBufTest(128)  # 128*8 = 1024, internal buffer size
       readBufTest(256)  # 128*8 = 2024, internal buffer size * 2
       readBufTest(300)  # bit more than 2 full internal buffer worth of data
@@ -855,6 +641,7 @@ when isMainModule:
       assert fs.getPosition == 28
 
       fs.close()
+
     # }}}
     block: # {{{ peek/func
       var fs = newFileStream(TestFileLE, littleEndian)
@@ -884,6 +671,7 @@ when isMainModule:
       assert fs.getPosition() == 20
 
       fs.close()
+
     # }}}
     block: # {{{ read/openArray
       var fs = newFileStream(TestFileLE, littleEndian)
@@ -966,6 +754,7 @@ when isMainModule:
       assert fs.getPosition() == 28
 
       fs.close()
+
     # }}}
     block: # {{{ peek/openArray
       var fs = newFileStream(TestFileLE, littleEndian)
@@ -1044,120 +833,7 @@ when isMainModule:
       assert fs.getPosition() == 20
 
       fs.close()
-    # }}}
-    block: # {{{ read/pointer
-      var fs = newFileStream(TestFileLE, littleEndian)
-      var inbuf: array[17, byte]
 
-      fs.read(int8, inbuf[1].addr, 1)
-      fs.read(int8, inbuf[2].addr, 1)
-      assert getAs(int8, inbuf, 1) == 0xbe'i8
-      assert getAs(int8, inbuf, 2) == 0xba'i8
-
-      fs.setPosition(0)
-      fs.read(uint8, inbuf[1].addr, 1)
-      fs.read(uint8, inbuf[2].addr, 1)
-      assert getAs(uint8, inbuf, 1) == 0xbe'u8
-      assert getAs(uint8, inbuf, 2) == 0xba'u8
-
-      fs.setPosition(0)
-      fs.read(int16, inbuf[1].addr, 1)
-      fs.read(int16, inbuf[3].addr, 1)
-      assert getAs(int16, inbuf, 1) == 0xbabe'i16
-      assert getAs(int16, inbuf, 3) == 0xcafe'i16
-
-      fs.setPosition(0)
-      fs.read(uint16, inbuf[1].addr, 1)
-      fs.read(uint16, inbuf[3].addr, 1)
-      assert getAs(uint16, inbuf, 1) == 0xbabe'u16
-      assert getAs(uint16, inbuf, 3) == 0xcafe'u16
-
-      fs.setPosition(0)
-      fs.read(int32, inbuf[1].addr, 1)
-      fs.read(int32, inbuf[5].addr, 1)
-      assert getAs(int32, inbuf, 1) == 0xcafebabe'i32
-      assert getAs(int32, inbuf, 5) == 0xdeadbeef'i32
-
-      fs.setPosition(0)
-      fs.read(uint32, inbuf[1].addr, 1)
-      fs.read(uint32, inbuf[5].addr, 1)
-      assert getAs(uint32, inbuf, 1) == 0xcafebabe'u32
-      assert getAs(uint32, inbuf, 5) == 0xdeadbeef'u32
-
-      fs.setPosition(0)
-      fs.read(int64, inbuf[1].addr, 1)
-      fs.read(int64, inbuf[9].addr, 1)
-      assert getAs(int64, inbuf, 1) == 0xdeadbeefcafebabe'i64
-      assert getAs(int64, inbuf, 9) == 0xfeedface0d15ea5e'i64
-
-      fs.setPosition(0)
-      fs.read(uint64, inbuf[1].addr, 1)
-      fs.read(uint64, inbuf[9].addr, 1)
-      assert getAs(uint64, inbuf, 1) == 0xdeadbeefcafebabe'u64
-      assert getAs(uint64, inbuf, 9) == 0xfeedface0d15ea5e'u64
-
-      fs.read(float32, inbuf[1].addr, 1)
-      fs.read(float64, inbuf[5].addr, 1)
-      assert getAs(float32, inbuf, 1) == TestFloat32
-      assert getAs(float64, inbuf, 5) == TestFloat64
-      assert fs.getPosition() == 28
-
-      fs.close()
-    # }}}
-    block: # {{{ peek/pointer
-      var fs = newFileStream(TestFileLE, littleEndian)
-      var inbuf: array[17, byte]
-
-      fs.peek(int8, inbuf[1].addr, 1)
-      fs.peek(int8, inbuf[2].addr, 1)
-      assert getAs(int8, inbuf, 1) == 0xbe'i8
-      assert getAs(int8, inbuf, 2) == 0xbe'i8
-
-      fs.peek(uint8, inbuf[1].addr, 1)
-      fs.peek(uint8, inbuf[2].addr, 1)
-      assert getAs(uint8, inbuf, 1) == 0xbe'u8
-      assert getAs(uint8, inbuf, 2) == 0xbe'u8
-
-      fs.peek(int16, inbuf[1].addr, 1)
-      fs.peek(int16, inbuf[3].addr, 1)
-      assert getAs(int16, inbuf, 1) == 0xbabe'i16
-      assert getAs(int16, inbuf, 3) == 0xbabe'i16
-
-      fs.peek(uint16, inbuf[1].addr, 1)
-      fs.peek(uint16, inbuf[3].addr, 1)
-      assert getAs(uint16, inbuf, 1) == 0xbabe'u16
-      assert getAs(uint16, inbuf, 3) == 0xbabe'u16
-
-      fs.peek(int32, inbuf[1].addr, 1)
-      fs.peek(int32, inbuf[5].addr, 1)
-      assert getAs(int32, inbuf, 1) == 0xcafebabe'i32
-      assert getAs(int32, inbuf, 5) == 0xcafebabe'i32
-
-      fs.peek(uint32, inbuf[1].addr, 1)
-      fs.peek(uint32, inbuf[5].addr, 1)
-      assert getAs(uint32, inbuf, 1) == 0xcafebabe'u32
-      assert getAs(uint32, inbuf, 5) == 0xcafebabe'u32
-
-      fs.peek(int64, inbuf[1].addr, 1)
-      fs.peek(int64, inbuf[9].addr, 1)
-      assert getAs(int64, inbuf, 1) == 0xdeadbeefcafebabe'i64
-      assert getAs(int64, inbuf, 9) == 0xdeadbeefcafebabe'i64
-
-      fs.peek(uint64, inbuf[1].addr, 1)
-      fs.peek(uint64, inbuf[9].addr, 1)
-      assert getAs(uint64, inbuf, 1) == 0xdeadbeefcafebabe'u64
-      assert getAs(uint64, inbuf, 9) == 0xdeadbeefcafebabe'u64
-
-      assert fs.getPosition() == 0
-      fs.setPosition(16)
-      fs.peek(float32, inbuf[1].addr, 1)
-      fs.setPosition(20)
-      fs.peek(float64, inbuf[5].addr, 1)
-      assert getAs(float32, inbuf, 1) == TestFloat32
-      assert getAs(float64, inbuf, 5) == TestFloat64
-      assert fs.getPosition() == 20
-
-      fs.close()
     # }}}
   # }}}
   # }}}
@@ -1191,10 +867,33 @@ when isMainModule:
       assert fs.read(float32) == TestFloat32
       assert fs.read(float64) == TestFloat64
       fs.close()
+
     # }}}
     block: # {{{ write/openArray
-    # }}}
-    block: # {{{ write/pointer
+      var buf: array[WriteBufSize*3, uint64]
+      for i in 0..buf.high:
+        buf[i] = MagicValue64_1 + i.uint64
+
+      proc writeBufTest(numValues: Natural) =
+        const offs = 123
+        var fs = newFileStream(TestFile, bigEndian, fmWrite)
+        fs.write(buf, offs, numValues)
+        fs.close()
+
+        var readBuf: array[WriteBufSize*3, uint64]
+        fs = newFileStream(TestFile, bigEndian)
+        fs.read(readBuf, offs, numValues)
+        fs.close()
+
+        for i in 0..<numValues:
+          assert readBuf[offs + i] == buf[offs + i]
+
+      writeBufTest(0)
+      writeBufTest(10)
+      writeBufTest(WriteBufSize)
+      writeBufTest(WriteBufSize * 2)
+      writeBufTest(WriteBufSize + 10)
+
     # }}}
   # }}}
   # }}}
