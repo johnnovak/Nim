@@ -1,9 +1,6 @@
-import endians
 import strformat
-
-proc newIOError(msg: string): ref IOError =
-  new(result)
-  result.msg = msg
+import strutils
+import stew/endians2
 
 
 when not defined(js):
@@ -52,19 +49,20 @@ when not defined(js):
       result = newFileStream(f, endian)
       result.filename = filename
     else:
-      raise newIOError(fmt"cannot open file '{filename}' using mode {mode}")
+      raise newException(IOError,
+        fmt"cannot open file '{filename}' using mode {mode}")
 
   # TODO check closed?
   proc close*(fs) =
     if fs == nil:
-      raise newIOError(
+      raise newException(IOError,
         "stream has already been closed or has not been properly initialised")
     if fs.f != nil: close(fs.f)
     fs.f = nil
 
   proc checkStreamOpen(fs) =
     if fs == nil:
-      raise newIOError(
+      raise newException(IOError,
         "stream has been closed or has not been properly initialised")
 
   proc flush*(fs) =
@@ -90,7 +88,8 @@ when not defined(js):
     setFilePos(fs.f, pos, toFileSeekPos(relativeTo))
 
   proc raiseReadError(fs) =
-    raise newIOError(fmt"cannot read from stream, filename: '{fs.filename}'")
+    raise newException(IOError,
+      fmt"cannot read from stream, filename: '{fs.filename}'")
 
   proc readAndSwap[T: SomeNumber](fs; buf: var openArray[T],
                                   startIndex, numValues: Natural) =
@@ -110,7 +109,10 @@ when not defined(js):
       dec(valuesLeft, valuesRead)
 
       for i in bufIndex..<bufIndex + valuesRead:
-        buf[i] = swapEndian(buf[i])
+        when sizeof(T) == 1: buf[i] = cast[T](swapBytes(cast[uint8 ](buf[i])))
+        elif sizeof(T) == 2: buf[i] = cast[T](swapBytes(cast[uint16](buf[i])))
+        elif sizeof(T) == 4: buf[i] = cast[T](swapBytes(cast[uint32](buf[i])))
+        elif sizeof(T) == 8: buf[i] = cast[T](swapBytes(cast[uint64](buf[i])))
       inc(bufIndex, valuesRead)
 
 
@@ -166,7 +168,8 @@ when not defined(js):
 
 
   proc raiseWriteError(fs) =
-    raise newIOError(fmt"cannot write to stream, filename: '{fs.filename}'")
+    raise newException(IOError,
+      fmt"cannot write to stream, filename: '{fs.filename}'")
 
   proc swapAndWrite[T: SomeNumber](fs; buf: openArray[T],
                                    startIndex, numValues: Natural) =
@@ -178,7 +181,14 @@ when not defined(js):
     while valuesLeft > 0:
       let valuesToWrite = min(valuesLeft, writeBuf.len)
       for i in 0..<valuesToWrite:
-        writeBuf[i] = swapEndian(buf[bufIndex])
+        when sizeof(T) == 1:
+          writeBuf[i] = cast[T](swapBytes(cast[uint8](buf[bufIndex])))
+        elif sizeof(T) == 2:
+          writeBuf[i] = cast[T](swapBytes(cast[uint16](buf[bufIndex])))
+        elif sizeof(T) == 4:
+          writeBuf[i] = cast[T](swapBytes(cast[uint32](buf[bufIndex])))
+        elif sizeof(T) == 8:
+          writeBuf[i] = cast[T](swapBytes(cast[uint64](buf[bufIndex])))
         inc(bufIndex)
 
       let
@@ -244,7 +254,7 @@ when not defined(js):
 
   proc checkStreamOpen(bs) =
     if bs.closed:
-      raise newIOError("stream has been closed")
+      raise newException(IOError, "stream has been closed")
 
   proc flush*(bs) = bs.checkStreamOpen()
 
@@ -268,34 +278,7 @@ when not defined(js):
     of sspEnd: bs.pos = bs.buf.high - pos  # TODO min/max?
 
   proc raiseReadError(bs) =
-    raise newIOError(fmt"cannot read from stream")
-
-
-  proc readAndSwap[T: SomeNumber](bs; buf: var openArray[T],
-                                  startIndex, numValues: Natural) =
-    var
-      valuesLeft = numValues
-      bufIndex = startIndex
-
-    while valuesLeft > 0:
-      let
-        valuesToRead = min(valuesLeft, ReadChunkSize)
-        bytesToRead = valuesToRead * sizeof(T)
-        numBytes = min(bytesToRead, bs.buf.len - bs.pos) # TODO negative numbers
-      when nimvm:
-        for i in 0..<numBytes:
-          buf[startIndex + i] = bs.buf[bs.pos + i]
-      else:
-        copyMem(buf[startIndex].addr, bs.buf[bs.pos].addr, numBytes)
-      bs.pos += numBytes  # TODO what does file do if there's failure?
-      if numBytes != bytesToRead:
-        bs.raiseReadError()
-      let valuesRead = valuesToRead
-      dec(valuesLeft, valuesRead)
-
-      for i in bufIndex..<bufIndex + valuesRead:
-        buf[i] = swapEndian(buf[i])
-      inc(bufIndex, valuesRead)
+    raise newException(IOError, fmt"cannot read from stream")
 
 
   # TODO merge into a single func
@@ -304,20 +287,31 @@ when not defined(js):
     bs.checkStreamOpen()
     if numValues == 0: return
 
-    if system.cpuEndian == bs.endian:
-      assert startIndex + numValues <= buf.len
-      let bytesToRead = numValues * sizeof(T)
-      let numBytes = min(bytesToRead, bs.buf.len - bs.pos) # TODO negative numbers
-      when nimvm:
-        for i in 0..<numBytes:
-          buf[startIndex + i] = bs.buf[bs.pos + i]
-      else:
-        copyMem(buf[startIndex].addr, bs.buf[bs.pos].addr, numBytes)
-      bs.pos += numBytes  # TODO what does file do if there's failure?
-      if numBytes != bytesToRead:
-        bs.raiseReadError()
+    if startIndex + numValues > buf.len:
+      raise newException(IndexError,
+        "Out of bounds: startIndex + numValues > bufLen " &
+        fmt"(startIndex: {startIndex}, numValues: {numValues}, " &
+        fmt"bufLen: {buf.len})")
+
+    let numBytes = numValues * sizeof(T)  # TODO negative numbers?
+    if numBytes > bs.buf.len - bs.pos:
+      bs.raiseReadError()
+    if bs.endian == bigEndian:
+      for i in 0..<numValues:
+        let bufStart = bs.pos + i
+        let bufEnd = bufStart + sizeof(T) - 1
+        let src = bs.buf[bufStart..bufEnd]
+        when sizeof(T) == 1:
+          buf[startIndex + i] = cast[T](fromBytes(uint8, src, bs.endian))
+        elif sizeof(T) == 2:
+          buf[startIndex + i] = cast[T](fromBytes(uint16, src, bs.endian))
+        elif sizeof(T) == 4:
+          buf[startIndex + i] = cast[T](fromBytes(uint32, src, bs.endian))
+        elif sizeof(T) == 8:
+          buf[startIndex + i] = cast[T](fromBytes(uint64, src, bs.endian))
     else:
-      bs.readAndSwap(buf, startIndex, numValues)
+      copyMem(buf[startIndex].addr, bs.buf[bs.pos].addr, numBytes)
+    bs.pos += numBytes  # TODO what does file do if there's failure?
 
 
   proc read*(bs; T: typedesc[SomeNumber]): T =
@@ -371,7 +365,7 @@ when not defined(js):
     while valuesLeft > 0:
       let valuesToWrite = min(valuesLeft, writeBuf.len)
       for i in 0..<valuesToWrite:
-        writeBuf[i] = swapEndian(buf[bufIndex])
+        writeBuf[i] = swapBytes(buf[bufIndex])
         inc(bufIndex)
 
       let
@@ -443,9 +437,9 @@ when isMainModule:
     buf[1] = toBE(MagicValue64_2)
     discard writeBuffer(outf, buf[0].addr, 16)
 
-    var f32 = toBE(TestFloat32)
+    var f32 = cast[float32](toBE(cast[uint32](TestFloat32)))
     discard writeBuffer(outf, f32.addr, 4)
-    var f64 = toBE(TestFloat64)
+    var f64 = cast[float64](toBE(cast[uint64](TestFloat64)))
     discard writeBuffer(outf, f64.addr, 8)
 
     var str = TestString
@@ -462,9 +456,9 @@ when isMainModule:
     buf[1] = toLE(MagicValue64_2)
     discard writeBuffer(outf, buf[0].addr, 16)
 
-    var f32 = toLE(TestFloat32)
+    var f32 = cast[float32](toLE(cast[uint32](TestFloat32)))
     discard writeBuffer(outf, f32.addr, 4)
-    var f64 = toLE(TestFloat64)
+    var f64 = cast[float64](toLE(cast[uint64](TestFloat64)))
     discard writeBuffer(outf, f64.addr, 8)
 
     var str = TestString
@@ -1220,14 +1214,10 @@ when isMainModule:
     testByteBufBigLE: seq[byte]
 
   block:
-    proc addSeq(s: var seq[byte], buf: openArray[byte]) =
-      for v in buf:
-        s.add(v)
-
     testByteBufBE.add(cast[array[8, byte]](toBE(MagicValue64_1)))
     testByteBufBE.add(cast[array[8, byte]](toBE(MagicValue64_2)))
-    testByteBufBE.add(cast[array[4, byte]](toBE(TestFloat32)))
-    testByteBufBE.add(cast[array[8, byte]](toBE(TestFloat64)))
+    testByteBufBE.add(cast[array[4, byte]](toBE(cast[uint32](TestFloat32))))
+    testByteBufBE.add(cast[array[8, byte]](toBE(cast[uint64](TestFloat64))))
     testByteBufBE.add(cast[array[TestString.len, byte]](TestString))
     testByteBufBE.add(cast[array[1, byte]](TestChar))
     testByteBufBE.add(cast[seq[byte]](TestBooleans))
@@ -1266,5 +1256,69 @@ when isMainModule:
     close(outf)
 ]#
   # }}}
+  # {{{ ByteStream read tests
+  # -------------------------
+  block: # {{{ Big endian
+    block: # {{{ read/func
+      var fs = newByteStream(testByteBufBE, bigEndian)
+
+      assert fs.read(int8)   == 0xde'i8
+      assert fs.read(int8)   == 0xad'i8
+      fs.setPosition(0)
+      assert fs.read(uint8)  == 0xde'u8
+      assert fs.read(uint8)  == 0xad'u8
+      fs.setPosition(0)
+      assert fs.read(int16)  == 0xdead'i16
+      assert fs.read(int16)  == 0xbeef'i16
+      fs.setPosition(0)
+      assert fs.read(uint16) == 0xdead'u16
+      assert fs.read(uint16) == 0xbeef'u16
+      fs.setPosition(0)
+      assert fs.read(int32)  == 0xdeadbeef'i32
+      assert fs.read(int32)  == 0xcafebabe'i32
+      fs.setPosition(0)
+      assert fs.read(uint32) == 0xdeadbeef'u32
+      assert fs.read(uint32) == 0xcafebabe'u32
+      fs.setPosition(0)
+      assert fs.read(int64)  == 0xdeadbeefcafebabe'i64
+      assert fs.read(int64)  == 0xfeedface0d15ea5e'i64
+      fs.setPosition(0)
+      assert fs.read(uint64) == 0xdeadbeefcafebabe'u64
+      assert fs.read(uint64) == 0xfeedface0d15ea5e'u64
+      fs.setPosition(0)
+      assert fs.read(uint64) == 0xdeadbeefcafebabe'u64
+      assert fs.read(uint64) == 0xfeedface0d15ea5e'u64
+
+      assert fs.read(float32) == TestFloat32
+      assert fs.read(float64) == TestFloat64
+      assert fs.getPosition == 28
+
+      assert fs.readStr(TestString.len) == TestString
+      assert fs.readChar() == TestChar
+      assert fs.readBool() == true
+      assert fs.readBool() == true
+      assert fs.readBool() == false
+      assert fs.readBool() == true
+      assert fs.readBool() == true
+      fs.close()
+
+    # }}}
+  # }}}
+
+proc read*[T: SomeNumber](bs; buf: var openArray[T],
+                          startIndex, numValues: Natural) =
+  ...
+  for i in 0..<numValues:
+    let bufStart = bs.pos + i
+    let bufEnd = bufStart + sizeof(T) - 1
+    let src = bs.buf[bufStart..bufEnd]
+    when sizeof(T) == 1:
+      buf[startIndex + i] = cast[T](fromBytes(uint8, src, bs.endian))
+    elif sizeof(T) == 2:
+      buf[startIndex + i] = cast[T](fromBytes(uint16, src, bs.endian))
+    elif sizeof(T) == 4:
+      buf[startIndex + i] = cast[T](fromBytes(uint32, src, bs.endian))
+    elif sizeof(T) == 8:
+      buf[startIndex + i] = cast[T](fromBytes(uint64, src, bs.endian))
 
 # vim: et:ts=2:sw=2:fdm=marker
